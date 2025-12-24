@@ -1,0 +1,42 @@
+#version 460
+
+
+#define PARTICLE_N 1
+
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly buffer in_layout0 {
+    vec2 position_in[PARTICLE_N];
+};
+
+layout(std430, binding = 2) readonly buffer in_layout {
+    vec2 velocity_in[PARTICLE_N];
+};
+
+layout(std430, binding = 3) writeonly buffer out_layout {
+    vec2 velocity_out[PARTICLE_N];
+};
+
+uniform vec2 u_resolution;
+
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    if (id >= PARTICLE_N) return;
+
+    vec2 position = position_in[id];
+    vec2 velocity = velocity_in[id];
+
+    vec2 next_pos = position + velocity * 0.0166666 * 1.0;
+
+    float radius = 1.0;
+
+    if (next_pos.x - radius <= 0.0 || next_pos.x + radius >= u_resolution.x) {
+        velocity.x = -velocity.x;
+    }
+    if (next_pos.y - radius <= 0.0 || next_pos.y + radius >= u_resolution.y)  {
+        velocity.y = -velocity.y;
+    }
+
+    velocity_out[id] = velocity;
+}
