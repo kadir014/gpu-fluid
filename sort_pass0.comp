@@ -12,7 +12,7 @@ layout(std430, binding = 0) readonly buffer entries_in {
     uint particle_id[PARTICLE_N];
 };
 
-layout(std430, binding = 1) writeonly buffer cell_counts_out {
+layout(std430, binding = 1) buffer cell_counts_out {
     uint cell_counts[CELL_N];
 };
 
