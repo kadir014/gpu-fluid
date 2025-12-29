@@ -18,8 +18,6 @@ layout(std430, binding = 7) writeonly buffer particles_out {
     vec2 velocity_out[PARTICLE_N];
 };
 
-uniform vec2 u_mouse;
-uniform vec2 u_gravity;
 uniform float u_dt;
 
 void main() {
@@ -30,15 +28,11 @@ void main() {
     vec2 position_old = position_old_in[id];
     vec2 velocity = velocity_in[id];
 
-    velocity += u_gravity * u_dt;
+    // Save previous position and advance to predicted position
+    position_old = position;
 
-    vec2 delta = position - u_mouse;
-    float dist = length(delta);
-    vec2 dir = delta / dist;
-    if (dist < 6.0) {
-        //velocity += dir / (dist * 1.0);
-        velocity += dir * 3.0;
-    }
+    // Integrate velocity
+    position += velocity * u_dt;
 
     position_out[id] = position;
     position_old_out[id] = position_old;

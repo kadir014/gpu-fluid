@@ -1,21 +1,23 @@
 from array import array
 from struct import unpack
-from time import perf_counter
+from time import perf_counter, time
 from math import ceil
 from random import randint, uniform
 
 import pygame
 import moderngl
 
+from miniprofiler import Profiler
+
 
 WINDOW_SIZE = WINDOW_WIDTH, WINDOW_HEIGHT = 1280, 720
-MAX_FPS = 60
+MAX_FPS = 0
 ITERATIONS = 10
 
-N = 500
-DOMAIN = pygame.FRect(0.0, 0.0, 10.0, 10.0)
-DOMAIN_TO_SCREEN = 60.0
-PARTICLE_RADIUS = 0.1
+N = 100_000
+DOMAIN = pygame.FRect(0.0, 0.0, 128.0, 72.0)
+DOMAIN_TO_SCREEN = 10.0
+PARTICLE_RADIUS = 0.7
 CELL_SIZE = PARTICLE_RADIUS
 GRID_WIDTH = ceil(DOMAIN.width / CELL_SIZE)
 GRID_HEIGHT = ceil(DOMAIN.height / CELL_SIZE)
@@ -24,7 +26,26 @@ GRID_CELL_COUNT = GRID_WIDTH * GRID_HEIGHT
 print("Grid cells:", GRID_CELL_COUNT)
 
 PARTICLE_ALPHA = 1.0
-PARTICLE_SIZE = PARTICLE_RADIUS * DOMAIN_TO_SCREEN
+PARTICLE_SIZE = PARTICLE_RADIUS * DOMAIN_TO_SCREEN * 0.5
+
+
+profiler = Profiler()
+profiler.register("frame")
+profiler.register("compute")
+profiler.register("render")
+
+profiler.register("grid")
+profiler.register("physics")
+
+profiler.register("histogram")
+profiler.register("prefixsum")
+profiler.register("scatter")
+
+profiler.register("forces")
+profiler.register("predict")
+profiler.register("ddr")
+profiler.register("collisions")
+profiler.register("position")
 
 
 pygame.init()
@@ -114,6 +135,7 @@ sort0_src = open("sort_pass0.comp", "r", encoding="utf-8").read()
 sort1_src = open("sort_pass1.comp", "r", encoding="utf-8").read()
 sort2_src = open("sort_pass2.comp", "r", encoding="utf-8").read()
 build_lut_src = open("build_lut.comp", "r", encoding="utf-8").read()
+clear_src = open("clear.comp", "r", encoding="utf-8").read()
 
 # TODO: shader patcher
 build_grid_src = build_grid_src.replace("#define PARTICLE_N 1", f"#define PARTICLE_N {N}")
@@ -129,12 +151,15 @@ sort2_src = sort2_src.replace("#define PARTICLE_N 1", f"#define PARTICLE_N {N}")
 sort2_src = sort2_src.replace("#define CELL_N 1", f"#define CELL_N {GRID_CELL_COUNT}")
 build_lut_src = build_lut_src.replace("#define PARTICLE_N 1", f"#define PARTICLE_N {N}")
 build_lut_src = build_lut_src.replace("#define CELL_N 1", f"#define CELL_N {GRID_CELL_COUNT}")
+clear_src = clear_src.replace("#define PARTICLE_N 1", f"#define PARTICLE_N {N}")
+clear_src = clear_src.replace("#define CELL_N 1", f"#define CELL_N {GRID_CELL_COUNT}")
 
 build_grid_shader = context.compute_shader(build_grid_src)
 sort0_shader = context.compute_shader(sort0_src)
 sort1_shader = context.compute_shader(sort1_src)
 sort2_shader = context.compute_shader(sort2_src)
 build_lut_shader = context.compute_shader(build_lut_src)
+clear_shader = context.compute_shader(clear_src)
 
 
 entries = context.buffer(reserve=N * 4 * 2)
@@ -184,12 +209,14 @@ cell_offsets.clear()
 
 
 compute_velocity_src = open("compute_velocity.comp", "r", encoding="utf-8").read()
+compute_predict_src = open("compute_predict.comp", "r", encoding="utf-8").read()
 compute_neighbor_src = open("compute_neighbor.comp", "r", encoding="utf-8").read()
 compute_collision_src = open("compute_collision.comp", "r", encoding="utf-8").read()
 compute_position_src = open("compute_position.comp", "r", encoding="utf-8").read()
 
 # TODO: shader patcher
 compute_velocity_src = compute_velocity_src.replace("#define PARTICLE_N 1", f"#define PARTICLE_N {N}")
+compute_predict_src = compute_predict_src.replace("#define PARTICLE_N 1", f"#define PARTICLE_N {N}")
 compute_neighbor_src = compute_neighbor_src.replace("#define PARTICLE_N 1", f"#define PARTICLE_N {N}")
 compute_neighbor_src = compute_neighbor_src.replace("#define CELL_SIZE 1.0", f"#define CELL_SIZE {CELL_SIZE}")
 compute_neighbor_src = compute_neighbor_src.replace("#define CELL_N 1", f"#define CELL_N {GRID_CELL_COUNT}")
@@ -199,6 +226,7 @@ compute_collision_src = compute_collision_src.replace("#define PARTICLE_N 1", f"
 compute_position_src = compute_position_src.replace("#define PARTICLE_N 1", f"#define PARTICLE_N {N}")
 
 compute_velocity = context.compute_shader(compute_velocity_src)
+compute_predict = context.compute_shader(compute_predict_src)
 compute_neighbor = context.compute_shader(compute_neighbor_src)
 compute_collision = context.compute_shader(compute_collision_src)
 compute_position = context.compute_shader(compute_position_src)
@@ -207,10 +235,10 @@ compute_collision["u_domain_min"] = DOMAIN.topleft
 compute_collision["u_domain_max"] = DOMAIN.bottomright
 
 
-particles_alt = context.buffer(reserve=N * 2 * 4 * 2)
+particles_alt = context.buffer(reserve=N * 2 * 4 * 3)
 particles_alt.bind_to_storage_buffer(6)
 
-particles_main = context.buffer(reserve=N * 2 * 4 * 2)
+particles_main = context.buffer(reserve=N * 2 * 4 * 3)
 particles_main.bind_to_storage_buffer(7)
 
 states = []
@@ -225,6 +253,37 @@ for p in range(N):
 
 particles_alt.write(array("f", states))
 particles_main.write(array("f", states))
+
+
+fluid_alt = context.buffer(reserve=N * 1 * 4 * 9)
+fluid_alt.bind_to_storage_buffer(8)
+
+fluid_main = context.buffer(reserve=N * 1 * 4 * 9)
+fluid_main.bind_to_storage_buffer(9)
+
+density_rest = 4.0
+K = 120.0 * 4
+K_near = 200.0 * 4
+sigma = 0.0
+beta = 0.0
+fluid_state = (
+    0.0,
+    0.0,
+    density_rest,
+    K,
+    K_near,
+    0.0,
+    0.0,
+    sigma,
+    beta
+)
+states = []
+for i in range(9):
+    for p in range(N):
+        states.append(fluid_state[i])
+
+fluid_alt.write(array("f", states))
+fluid_main.write(array("f", states))
 
 
 base_vertex_shader = f"""
@@ -278,7 +337,7 @@ _alt_vao = context.vertex_array(
         (particles_alt, "2f", "in_position"),
     ),
 )
-_alt_vao.bind(1, "f", particles_alt, "2f", N * 2 * 4)
+_alt_vao.bind(1, "f", particles_alt, "2f", N * 2 * 4 * 2)
 
 _main_vao = context.vertex_array(
     _program,
@@ -286,137 +345,168 @@ _main_vao = context.vertex_array(
         (particles_main, "2f", "in_position"),
     ),
 )
-_main_vao.bind(1, "f", particles_main, "2f", N * 2 * 4)
+_main_vao.bind(1, "f", particles_main, "2f", N * 2 * 4 * 2)
 
 
 context.point_size = PARTICLE_SIZE
 
+compute_velocity["u_gravity"] = (0.0, 10.0)
 
+
+last_log = time()
 
 frame = 0
 while is_running:
-    dt = clock.tick(MAX_FPS) * 0.001
+    with profiler.profile("frame"):
+        dt = clock.tick(MAX_FPS) * 0.001
 
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            is_running = False
-
-        elif event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_ESCAPE:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
                 is_running = False
 
-    mouse = pygame.Vector2(*pygame.mouse.get_pos())
-    pmouse = mouse / DOMAIN_TO_SCREEN
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    is_running = False
+
+        mouse = pygame.Vector2(*pygame.mouse.get_pos())
+        pmouse = mouse / DOMAIN_TO_SCREEN
+
+        with profiler.profile("compute"):
+            with profiler.profile("grid"):
+                with profiler.profile("histogram"):
+                    # TODO: BUNLAR NIYE ÇOK ZAMAN YIYOR
+                    #cell_ranges.clear()
+                    #cell_counts.clear()
+                    #cell_offsets.clear()
+
+                    clear_shader.run(ceil(GRID_CELL_COUNT / 32.0), 1, 1)
+                    context.memory_barrier()
+
+                    build_grid_shader.run(ceil(N / 32.0), 1, 1)
+                    context.memory_barrier()
+
+                    # Histogram
+                    sort0_shader.run(ceil(N / 32.0), 1, 1)
+                    context.memory_barrier()
+
+                    # print("cell_counts:")
+                    # data = cell_counts.read()
+                    # d = unpack(f"{GRID_CELL_COUNT}I", data)
+                    # print(d)
+
+                with profiler.profile("prefixsum"):
+                    # Prefix Sum
+                    # EXACTLY ONE WORK GROUP!
+                    sort1_shader.run(1, 1, 1)
+                    context.memory_barrier()
+
+                    # print("cell_offsets:")
+                    # data = cell_offsets.read()
+                    # d = unpack(f"{GRID_CELL_COUNT}I", data)
+                    # print(d)
+
+                with profiler.profile("scatter"):
+                    # Scatter
+                    sort2_shader.run(ceil(N / 32.0), 1, 1)
+                    context.memory_barrier()
 
 
-    # print()
-    # print("before sorting:")
-    # data = entries.read()
-    # d = unpack(f"{N*2}I", data)
-    # print(d[:N])
-
-    start = perf_counter()
-
-    cell_ranges.clear()
-    build_grid_shader.run(ceil(N / 32.0), 1, 1)
-    context.memory_barrier()
-
-    # TODO: BUNLAR NIYE ÇOK ZAMAN YIYOR
-    cell_counts.clear()
-    cell_offsets.clear()
-
-    # Histogram
-    sort0_shader.run(ceil(N / 32.0), 1, 1)
-    context.memory_barrier()
-
-    # print("cell_counts:")
-    # data = cell_counts.read()
-    # d = unpack(f"{GRID_CELL_COUNT}I", data)
-    # print(d)
-
-    # Prefix Sum
-    # EXACTLY ONE WORK GROUP!
-    sort1_shader.run(1, 1, 1)
-    context.memory_barrier()
-
-    # print("cell_offsets:")
-    # data = cell_offsets.read()
-    # d = unpack(f"{GRID_CELL_COUNT}I", data)
-    # print(d)
-
-    # Scatter
-    sort2_shader.run(ceil(N / 32.0), 1, 1)
-    context.memory_barrier()
+                    build_lut_shader.run(ceil(N / 32.0), 1, 1)
+                    context.memory_barrier()
 
 
-    build_lut_shader.run(ceil(N / 32.0), 1, 1)
-    context.memory_barrier()
+            with profiler.profile("physics"):
+                substeps = 3
+                hertz = 120
 
-    current_is_main = False
+                sim_dt = 1.0 / hertz / float(substeps)
+                sim_inv_dt = 1.0 / sim_dt
+                compute_velocity["u_dt"] = sim_dt
+                compute_predict["u_dt"] = sim_dt
+                compute_position["u_inv_dt"] = sim_inv_dt
+                compute_neighbor["u_dt"] = sim_dt
 
-    compute_velocity["u_mouse"] = (pmouse.x, pmouse.y)
-    compute_velocity.run(ceil(N / 32.0), 1, 1)
-    context.memory_barrier()
-    particles_alt, particles_main = particles_main, particles_alt
-    particles_alt.bind_to_storage_buffer(6)
-    particles_main.bind_to_storage_buffer(7)
-    current_is_main = not current_is_main
+                for i in range(substeps):
+                    current_is_main = False
+                    with profiler.profile("forces"):
+                        compute_velocity["u_mouse"] = (pmouse.x, pmouse.y)
+                        compute_velocity.run(ceil(N / 32.0), 1, 1)
+                        context.memory_barrier()
+                        particles_alt, particles_main = particles_main, particles_alt
+                        particles_alt.bind_to_storage_buffer(6)
+                        particles_main.bind_to_storage_buffer(7)
+                        current_is_main = not current_is_main
 
-    compute_neighbor.run(ceil(N / 32.0), 1, 1)
-    context.memory_barrier()
-    particles_alt, particles_main = particles_main, particles_alt
-    particles_alt.bind_to_storage_buffer(6)
-    particles_main.bind_to_storage_buffer(7)
-    current_is_main = not current_is_main
+                    with profiler.profile("predict"):
+                        compute_predict.run(ceil(N / 32.0), 1, 1)
+                        context.memory_barrier()
+                        particles_alt, particles_main = particles_main, particles_alt
+                        particles_alt.bind_to_storage_buffer(6)
+                        particles_main.bind_to_storage_buffer(7)
+                        current_is_main = not current_is_main
 
-    compute_collision.run(ceil(N / 32.0), 1, 1)
-    context.memory_barrier()
-    particles_alt, particles_main = particles_main, particles_alt
-    particles_alt.bind_to_storage_buffer(6)
-    particles_main.bind_to_storage_buffer(7)
-    current_is_main = not current_is_main
+                    with profiler.profile("ddr"):
+                        compute_neighbor.run(ceil(N / 32.0), 1, 1)
+                        context.memory_barrier()
+                        particles_alt, particles_main = particles_main, particles_alt
+                        particles_alt.bind_to_storage_buffer(6)
+                        particles_main.bind_to_storage_buffer(7)
+                        current_is_main = not current_is_main
 
-    compute_position.run(ceil(N / 32.0), 1, 1)
-    context.memory_barrier()
-    particles_alt, particles_main = particles_main, particles_alt
-    particles_alt.bind_to_storage_buffer(6)
-    particles_main.bind_to_storage_buffer(7)
-    current_is_main = not current_is_main
+                        fluid_alt, fluid_main = fluid_main, fluid_alt
+                        fluid_alt.bind_to_storage_buffer(8)
+                        fluid_main.bind_to_storage_buffer(9)
 
-    #particles_alt, particles_main = particles_main, particles_alt
-    #particles_alt.bind_to_storage_buffer(6)
-    #particles_main.bind_to_storage_buffer(7)
-    #particle_dispatches += 1
+                    with profiler.profile("collisions"):
+                        compute_collision.run(ceil(N / 32.0), 1, 1)
+                        context.memory_barrier()
+                        particles_alt, particles_main = particles_main, particles_alt
+                        particles_alt.bind_to_storage_buffer(6)
+                        particles_main.bind_to_storage_buffer(7)
+                        current_is_main = not current_is_main
 
+                    with profiler.profile("position"):
+                        compute_position.run(ceil(N / 32.0), 1, 1)
+                        context.memory_barrier()
+                        particles_alt, particles_main = particles_main, particles_alt
+                        particles_alt.bind_to_storage_buffer(6)
+                        particles_main.bind_to_storage_buffer(7)
+                        current_is_main = not current_is_main
 
-    elapsed0 = perf_counter() - start
+        with profiler.profile("render"):
+            context.clear(0.0, 0.0, 0.0)
 
-    # print("after sorting:")
-    # data = sorted_entries.read()
-    # d = unpack(f"{N*2}I", data)
-    # print(d[:N])
+            if frame % 2 == 0 and current_is_main:
+                _main_vao.render(moderngl.POINTS, vertices=N)
+            else:
+                _alt_vao.render(moderngl.POINTS, vertices=N)
+            frame += 1
 
+            pygame.display.flip()
 
-    #particles_alt, particles_main = particles_main, particles_alt
-    #particles_alt.bind_to_storage_buffer(0)
-    #particles_main.bind_to_storage_buffer(1)
+    pygame.display.set_caption(f"GPU Fluid: {round(clock.get_fps())}   Compute: {round(profiler['compute'].avg * 1000, 3)}ms   Render: {round(profiler['render'].avg * 1000, 3)}ms")
 
+    if time() - last_log > 1.0:
+        last_log = time()
 
-    start = perf_counter()
-
-    context.clear(0.0, 0.0, 0.0)
-
-    if frame % 2 == 0 and current_is_main:
-        _main_vao.render(moderngl.POINTS, vertices=N)
-    else:
-        _alt_vao.render(moderngl.POINTS, vertices=N)
-    frame += 1
-
-    pygame.display.flip()
-
-    elapsed1 = perf_counter() - start
-
-    pygame.display.set_caption(f"FPS: {round(clock.get_fps())}   Compute: {round(elapsed0*1000.0, 3)}ms   Render: {round(elapsed1*1000.0, 3)}ms")
+        print("\033c", end="")
+        print("Average profiling of last second in milliseconds")
+        print("================================================")
+        print(f"Frame:   {round(profiler['frame'].avg * 1000.0, 3)}ms")
+        print(f"Compute: {round(profiler['compute'].avg * 1000.0, 3)}ms")
+        print(f"Render:  {round(profiler['render'].avg * 1000.0, 3)}ms")
+        print()
+        print(f"Grid: {round(profiler['grid'].avg * 1000.0, 3)}ms")
+        print(f"-  Histogram: {round(profiler['histogram'].avg * 1000.0, 3)}ms")
+        print(f"-  Prefixsum: {round(profiler['prefixsum'].avg * 1000.0, 3)}ms")
+        print(f"-  Scatter:   {round(profiler['scatter'].avg * 1000.0, 3)}ms")
+        print()
+        print(f"Physics: {round(profiler['physics'].avg * 1000.0, 3)}ms")
+        print(f"-  Forces:    {round(profiler['forces'].avg * 1000.0, 3)}ms")
+        print(f"-  Predict:   {round(profiler['predict'].avg * 1000.0, 3)}ms")
+        print(f"-  DDR:       {round(profiler['ddr'].avg * 1000.0, 3)}ms")
+        print(f"-  Collision: {round(profiler['collisions'].avg * 1000.0, 3)}ms")
+        print(f"-  Position:  {round(profiler['position'].avg * 1000.0, 3)}ms")
 
 context.release()
 pygame.quit()

@@ -1,0 +1,31 @@
+#version 460
+
+
+#define PARTICLE_N 1
+#define CELL_N 1
+
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 1) writeonly buffer cell_counts_out {
+    uint cell_counts[CELL_N];
+};
+
+layout(std430, binding = 2) writeonly buffer cell_offsets_out {
+    uint cell_offsets[CELL_N];
+};
+
+layout(std430, binding = 5) writeonly buffer cell_ranges_out {
+    uint cell_start[CELL_N];
+    uint cell_end[CELL_N];
+};
+
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    if (id >= CELL_N) return;
+
+    cell_counts[id] = 0;
+    cell_offsets[id] = 0;
+    cell_start[id] = 0;
+    cell_end[id] = 0;
+}

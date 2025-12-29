@@ -8,11 +8,13 @@ layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 
 layout(std430, binding = 6) readonly buffer particles_in {
     vec2 position_in[PARTICLE_N];
+    vec2 position_old_in[PARTICLE_N];
     vec2 velocity_in[PARTICLE_N];
 };
 
 layout(std430, binding = 7) writeonly buffer particles_out {
     vec2 position_out[PARTICLE_N];
+    vec2 position_old_out[PARTICLE_N];
     vec2 velocity_out[PARTICLE_N];
 };
 
@@ -24,19 +26,30 @@ void main() {
     if (id >= PARTICLE_N) return;
 
     vec2 position = position_in[id];
+    vec2 position_old = position_old_in[id];
     vec2 velocity = velocity_in[id];
 
-    vec2 next_pos = position + velocity * 0.0166666 * 1.0;
+    const float padding = 1.0;
+    const float correction = 0.32;
 
-    float radius = 0.1;
+    vec2 domain_min = u_domain_min + vec2(padding);
+    vec2 domain_max = u_domain_max - vec2(padding);
 
-    if (next_pos.x - radius <= u_domain_min.x || next_pos.x + radius >= u_domain_max.x) {
-        velocity.x = -velocity.x;
+    if (position.x < domain_min.x) {
+        position.x += (domain_min.x - position.x) * correction;
     }
-    if (next_pos.y - radius <= u_domain_min.y || next_pos.y + radius >= u_domain_max.y)  {
-        velocity.y = -velocity.y;
+    else if (position.x > domain_max.x) {
+        position.x += (domain_max.x - position.x) * correction;
+    }
+
+    if (position.y < domain_min.y) {
+        position.y += (domain_min.y - position.y) * correction;
+    }
+    else if (position.y > domain_max.y) {
+        position.y += (domain_max.y - position.y) * correction;
     }
 
     position_out[id] = position;
+    position_old_out[id] = position_old;
     velocity_out[id] = velocity;
 }

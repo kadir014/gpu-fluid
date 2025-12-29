@@ -8,19 +8,42 @@ layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 
 layout(std430, binding = 6) readonly buffer particles_in {
     vec2 position_in[PARTICLE_N];
+    vec2 position_old_in[PARTICLE_N];
     vec2 velocity_in[PARTICLE_N];
 };
 
 layout(std430, binding = 7) writeonly buffer particles_out {
     vec2 position_out[PARTICLE_N];
+    vec2 position_old_out[PARTICLE_N];
     vec2 velocity_out[PARTICLE_N];
 };
+
+uniform float u_inv_dt;
 
 void main() {
     uint id = gl_GlobalInvocationID.x;
     if (id >= PARTICLE_N) return;
 
-    position_out[id] = position_in[id] + velocity_in[id] * 0.0166666 * 1.0;
+    vec2 position = position_in[id];
+    vec2 position_old = position_old_in[id];
+    vec2 velocity = velocity_in[id];
 
-    velocity_out[id] = velocity_in[id] * 0.96;
+    // Use previous position to compute next velocity
+    velocity = (position - position_old) * u_inv_dt;
+
+    // linear damping to avoid numerical precision errors
+    float k = 0.9995;
+    velocity *= k;
+
+    // TODO: Speed limit
+    float vel = length(velocity);
+    const float max_vel = 47.0;
+    if (vel > max_vel) {
+        vec2 n = velocity / vel;
+        velocity = max_vel * n;
+    } 
+
+    position_out[id] = position;
+    position_old_out[id] = position_old;
+    velocity_out[id] = velocity;
 }

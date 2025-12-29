@@ -12,11 +12,13 @@ layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 
 layout(std430, binding = 6) readonly buffer particles_in {
     vec2 position_in[PARTICLE_N];
+    vec2 position_old_in[PARTICLE_N];
     vec2 velocity_in[PARTICLE_N];
 };
 
 layout(std430, binding = 7) writeonly buffer particles_out {
     vec2 position_out[PARTICLE_N];
+    vec2 position_old_out[PARTICLE_N];
     vec2 velocity_out[PARTICLE_N];
 };
 
@@ -30,14 +32,106 @@ layout(std430, binding = 5) readonly buffer cell_ranges_in {
     uint cell_end[CELL_N];
 };
 
+layout(std430, binding = 8) readonly buffer fluid_in {
+    float density_in[PARTICLE_N];
+    float density_near_in[PARTICLE_N];
+    float density_rest_in[PARTICLE_N];
+
+    float stiffness_in[PARTICLE_N];
+    float stiffness_near_in[PARTICLE_N];
+
+    float pressure_in[PARTICLE_N];
+    float pressure_near_in[PARTICLE_N];
+
+    float viscosity_sigma_in[PARTICLE_N];
+    float viscosity_beta_in[PARTICLE_N];
+};
+
+layout(std430, binding = 9) writeonly buffer fluid_out {
+    float density_out[PARTICLE_N];
+    float density_near_out[PARTICLE_N];
+    float density_rest_out[PARTICLE_N];
+
+    float stiffness_out[PARTICLE_N];
+    float stiffness_near_out[PARTICLE_N];
+
+    float pressure_out[PARTICLE_N];
+    float pressure_near_out[PARTICLE_N];
+
+    float viscosity_sigma_out[PARTICLE_N];
+    float viscosity_beta_out[PARTICLE_N];
+};
+
+uniform float u_dt;
+
 void main() {
     uint id = gl_GlobalInvocationID.x;
     if (id >= PARTICLE_N) return;
 
     vec2 position = position_in[id];
+    vec2 position_old = position_old_in[id];
     vec2 velocity = velocity_in[id];
 
+    float density = density_in[id];
+    float density_near = density_near_in[id];
+    float density_rest = density_rest_in[id];
+    float stiffness = stiffness_in[id];
+    float stiffness_near = stiffness_near_in[id];
+    float pressure = pressure_in[id];
+    float pressure_near = pressure_near_in[id];
+
+    const float RADIUS = CELL_SIZE;
+
+    density = 0.0;
+    density_near = 0.0;
+
     ivec2 base_cell = ivec2(floor(position / CELL_SIZE));
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            ivec2 neighbor_cell = base_cell + ivec2(x, y);
+            neighbor_cell.x = clamp(neighbor_cell.x, 0, GRID_WIDTH - 1);
+            neighbor_cell.y = clamp(neighbor_cell.y, 0, GRID_HEIGHT - 1);
+
+            uint neighbor_cell_id = neighbor_cell.x + neighbor_cell.y * GRID_WIDTH;
+
+            uint start = cell_start[neighbor_cell_id];
+            uint end = cell_end[neighbor_cell_id];
+
+            for (uint i = start; i < end; i++) {
+                uint neighbor_id = sorted_particle_id[i];
+
+                // Skip self interaction
+                if (neighbor_id == id) continue;
+
+                vec2 j_position = position_in[neighbor_id];
+                vec2 j_velocity = velocity_in[neighbor_id];
+
+                if (distance(position, j_position) < RADIUS) {
+                    
+                    /* Double Density Relaxation */
+
+                    // Compute densities
+
+                    vec2 d = j_position - position;
+                    float rij = sqrt(d.x * d.x + d.y * d.y);
+                    float q = rij / RADIUS;
+
+                    if (q < 1.0) {
+                        float kernel = 1.0 - q;
+                        float kernel2 = kernel * kernel;
+                        density += kernel2;
+                        density_near += kernel * kernel2;
+                    }
+                }
+            }
+        }
+    }
+
+    pressure = stiffness * (density - density_rest);
+    pressure_near = stiffness_near * density_near;
+
+    // Accumulate displacement for particle i in order to avoid bias
+    vec2 acc = vec2(0.0);
 
     for (int y = -1; y <= 1; y++) {
         for (int x = -1; x <= 1; x++) {
@@ -59,16 +153,42 @@ void main() {
                 vec2 j_position = position_in[neighbor_id];
                 vec2 j_velocity = velocity_in[neighbor_id];
 
-                if (distance(position, j_position) < CELL_SIZE) {
-                    vec2 delta = j_position - position;
-                    vec2 dir = normalize(delta);
-                    float dist = length(delta);
-                    velocity -= dir * dist;
+                // TODO: BUNLARA GEREK YOK ZATEN q < 1.0 kontrol ediyo dist
+                if (distance(position, j_position) < RADIUS * 2.0) {
+                    
+                    /* Double Density Relaxation */
+
+                    // Compute densities
+
+                    vec2 d = j_position - position;
+                    float rij = sqrt(d.x * d.x + d.y * d.y);
+                    if (rij <= 0.00001) continue;
+                    float q = rij / RADIUS;
+
+                    if (q < 1.0) {
+                        vec2 n = d / rij;
+                        float kernel = 1.0 - q;
+                        
+                        // Density relaxation displacement 
+                        float D = 0.5 *
+                                (u_dt * u_dt) *
+                                (pressure * kernel + pressure_near * kernel * kernel);
+
+                        acc -= D * n;
+                    }
                 }
             }
         }
     }
+    position += acc;
 
     position_out[id] = position;
+    position_old_out[id] = position_old;
     velocity_out[id] = velocity;
+
+    density_out[id] = density;
+    density_near_out[id] = density_near;
+    
+    pressure_out[id] = pressure;
+    pressure_near_out[id] = pressure_near;
 }
