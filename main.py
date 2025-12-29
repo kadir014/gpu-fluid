@@ -136,35 +136,24 @@ texture.bind_to_image(0)
 
 
 
-positions_alt = context.buffer(reserve=N * 2 * 4)
-positions_alt.bind_to_storage_buffer(0)
+particles_alt = context.buffer(reserve=N * 2 * 4 * 2)
+particles_alt.bind_to_storage_buffer(0)
 
-positions_main = context.buffer(reserve=N * 2 * 4)
-positions_main.bind_to_storage_buffer(1)
+particles_main = context.buffer(reserve=N * 2 * 4 * 2)
+particles_main.bind_to_storage_buffer(1)
 
-pos = []
+states = []
 for p in range(N):
-    pos.append(randint(5, 500))
-    pos.append(randint(5, 500))
+    states.append(randint(5, 500))
+    states.append(randint(5, 500))
 
-positions_alt.write(array("f", pos))
-positions_main.write(array("f", pos))
-
-
-velocity_alt = context.buffer(reserve=N * 2 * 4)
-velocity_alt.bind_to_storage_buffer(2)
-
-velocity_main = context.buffer(reserve=N * 2 * 4)
-velocity_main.bind_to_storage_buffer(3)
-
-pos = []
 for p in range(N):
     vel = pygame.Vector2(1, 0).rotate(randint(0, 360)) * float(randint(5, 15))
-    pos.append(vel.x)
-    pos.append(vel.y)
+    states.append(vel.x)
+    states.append(vel.y)
 
-velocity_alt.write(array("f", pos))
-velocity_main.write(array("f", pos))
+particles_alt.write(array("f", states))
+particles_main.write(array("f", states))
 
 
 base_vertex_shader = f"""
@@ -214,10 +203,10 @@ _program = context.program(
 _vao = context.vertex_array(
     _program,
     (
-        (positions_alt, "2f", "in_position"),
-        (velocity_alt, "2f", "in_velocity"),
+        (particles_alt, "2f", "in_position"),
     ),
 )
+_vao.bind(1, "f", particles_alt, "2f", N * 2 * 4)
 
 
 context.point_size = SIZE
@@ -242,32 +231,28 @@ while is_running:
     for step in range(ITERATIONS):
         compute_velocity.run(ceil(N / 32.0), 1, 1)
 
-        velocity_alt, velocity_main = velocity_main, velocity_alt
-        velocity_alt.bind_to_storage_buffer(2)
-        velocity_main.bind_to_storage_buffer(3)
+        particles_alt, particles_main = particles_main, particles_alt
+        particles_alt.bind_to_storage_buffer(0)
+        particles_main.bind_to_storage_buffer(1)
 
         compute_collision.run(ceil(N / 32.0), 1, 1)
 
-        velocity_alt, velocity_main = velocity_main, velocity_alt
-        velocity_alt.bind_to_storage_buffer(2)
-        velocity_main.bind_to_storage_buffer(3)
+        particles_alt, particles_main = particles_main, particles_alt
+        particles_alt.bind_to_storage_buffer(0)
+        particles_main.bind_to_storage_buffer(1)
 
         compute_position.run(ceil(N / 32.0), 1, 1)
 
-        positions_alt, positions_main = positions_main, positions_alt
-        positions_alt.bind_to_storage_buffer(0)
-        positions_main.bind_to_storage_buffer(1)
-
-        velocity_alt, velocity_main = velocity_main, velocity_alt
-        velocity_alt.bind_to_storage_buffer(2)
-        velocity_main.bind_to_storage_buffer(3)
+        particles_alt, particles_main = particles_main, particles_alt
+        particles_alt.bind_to_storage_buffer(0)
+        particles_main.bind_to_storage_buffer(1)
 
     elapsed0 = perf_counter() - start
 
     start = perf_counter()
-    
+
     context.clear(0.0, 0.0, 0.0)
-    _vao.render(moderngl.POINTS)
+    _vao.render(moderngl.POINTS, vertices=N)
     pygame.display.flip()
 
     elapsed1 = perf_counter() - start

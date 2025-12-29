@@ -6,19 +6,13 @@
 
 layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 
-layout(std430, binding = 0) readonly buffer in_layout {
+layout(std430, binding = 6) readonly buffer particles_in {
     vec2 position_in[PARTICLE_N];
-};
-
-layout(std430, binding = 2) readonly buffer in_layout2 {
     vec2 velocity_in[PARTICLE_N];
 };
 
-layout(std430, binding = 1) writeonly buffer out_layout {
+layout(std430, binding = 7) writeonly buffer particles_out {
     vec2 position_out[PARTICLE_N];
-};
-
-layout(std430, binding = 3) writeonly buffer out_layout2 {
     vec2 velocity_out[PARTICLE_N];
 };
 
@@ -28,5 +22,5 @@ void main() {
 
     position_out[id] = position_in[id] + velocity_in[id] * 0.0166666 * 1.0;
 
-    velocity_out[id] = velocity_in[id] * 0.9996;
+    velocity_out[id] = velocity_in[id] * 0.96;
 }

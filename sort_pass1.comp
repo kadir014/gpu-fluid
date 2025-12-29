@@ -1,0 +1,67 @@
+#version 460
+
+
+#define PARTICLE_N 1
+#define CELL_N 1
+
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly buffer entries_in {
+    uint cell_id[PARTICLE_N];
+    uint particle_id[PARTICLE_N];
+};
+
+layout(std430, binding = 1) readonly buffer cell_counts_in {
+    uint cell_counts[CELL_N];
+};
+
+layout(std430, binding = 2) writeonly buffer cell_offsets_out {
+    uint cell_offsets[CELL_N];
+};
+
+shared uint temp[CELL_N];
+
+void main() {
+    // ENSURE ONLY ONE WORKGROUP
+    // if (gl_WorkGroupID.x != 0)
+    //     return;
+
+    // uint tid = gl_LocalInvocationID.x;
+
+    // if (tid < CELL_N) {
+    //     temp[tid] = cell_counts[tid];
+    // }
+
+    // barrier();
+
+    // if (tid == 0) {
+    //     uint sum = 0;
+    //     for (uint i = 0; i < CELL_N; i++) {
+    //         uint c = temp[i];
+    //         temp[i] = sum;
+    //         sum += c;
+    //     }
+    // }
+
+    // barrier();
+
+    // if (tid < CELL_N) {
+    //     cell_offsets[tid] = temp[tid];
+    // }
+
+    // Ensure only one workgroup
+    if (gl_WorkGroupID.x != 0) {
+        return;
+    }
+
+    // Ensure only one thread
+    if (gl_LocalInvocationID.x == 0) {
+        uint sum = 0;
+        for (uint i = 0; i < CELL_N; i++) {
+            uint c = cell_counts[i];
+            cell_offsets[i] = sum;
+            sum += c;
+        }
+    }
+}

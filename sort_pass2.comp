@@ -1,0 +1,39 @@
+#version 460
+
+
+#define PARTICLE_N 1
+#define CELL_N 1
+
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly buffer entries_in {
+    uint cell_id[PARTICLE_N];
+    uint particle_id[PARTICLE_N];
+};
+
+layout(std430, binding = 4) writeonly buffer sorted_entries_out {
+    uint sorted_cell_id[PARTICLE_N];
+    uint sorted_particle_id[PARTICLE_N];
+};
+
+layout(std430, binding = 2) buffer cell_offsets_in {
+    uint cell_offsets[CELL_N];
+};
+
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    if (id >= PARTICLE_N) return;
+
+    uint cell = cell_id[id];
+    uint particle = particle_id[id];
+
+    // WRONG
+    //uint sorted_id = cell_offsets[cell];
+    //atomicAdd(cell_offsets[cell], 1);
+
+    uint sorted_id = atomicAdd(cell_offsets[cell], 1);
+
+    sorted_cell_id[sorted_id] = cell;
+    sorted_particle_id[sorted_id] = particle;
+}

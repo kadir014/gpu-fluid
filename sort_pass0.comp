@@ -1,0 +1,25 @@
+#version 460
+
+
+#define PARTICLE_N 1
+#define CELL_N 1
+
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly buffer entries_in {
+    uint cell_id[PARTICLE_N];
+    uint particle_id[PARTICLE_N];
+};
+
+layout(std430, binding = 1) writeonly buffer cell_counts_out {
+    uint cell_counts[CELL_N];
+};
+
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    if (id >= PARTICLE_N) return;
+
+    uint cell = cell_id[id];
+    atomicAdd(cell_counts[cell], 1);
+}

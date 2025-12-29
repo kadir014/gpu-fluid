@@ -1,0 +1,35 @@
+#version 460
+
+
+#define PARTICLE_N 1
+#define CELL_SIZE 1.0
+#define GRID_WIDTH 1
+#define GRID_HEIGHT 1
+
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 6) readonly buffer particles_in {
+    vec2 position_in[PARTICLE_N];
+    vec2 velocity_in[PARTICLE_N];
+};
+
+layout(std430, binding = 0) writeonly buffer entries_out {
+    uint cell_id[PARTICLE_N];
+    uint particle_id[PARTICLE_N];
+};
+
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    if (id >= PARTICLE_N) return;
+
+    vec2 position = position_in[id];
+
+    ivec2 cell = ivec2(floor(position / CELL_SIZE));
+    cell.x = clamp(cell.x, 0, GRID_WIDTH - 1);
+    cell.y = clamp(cell.y, 0, GRID_HEIGHT - 1);
+    uint p_cell_id = cell.x + cell.y * GRID_WIDTH;
+
+    cell_id[id] = p_cell_id;
+    particle_id[id] = id;
+}
