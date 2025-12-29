@@ -41,8 +41,6 @@ void main() {
 
     for (int y = -1; y <= 1; y++) {
         for (int x = -1; x <= 1; x++) {
-            // calculate cell id
-            // calculate start & end
             ivec2 neighbor_cell = base_cell + ivec2(x, y);
             neighbor_cell.x = clamp(neighbor_cell.x, 0, GRID_WIDTH - 1);
             neighbor_cell.y = clamp(neighbor_cell.y, 0, GRID_HEIGHT - 1);
@@ -57,9 +55,20 @@ void main() {
 
                 // Skip self interaction
                 if (neighbor_id == id) continue;
+
+                vec2 j_position = position_in[neighbor_id];
+                vec2 j_velocity = velocity_in[neighbor_id];
+
+                if (distance(position, j_position) < CELL_SIZE) {
+                    vec2 delta = j_position - position;
+                    vec2 dir = normalize(delta);
+                    float dist = length(delta);
+                    velocity -= dir * dist;
+                }
             }
         }
     }
 
+    position_out[id] = position;
     velocity_out[id] = velocity;
 }

@@ -25,12 +25,14 @@ void main() {
     vec2 position = position_in[id];
     vec2 velocity = velocity_in[id];
 
+    //velocity += vec2(0.0, 9.81) * 0.0166666;
+
     vec2 delta = position - u_mouse;
     float dist = length(delta);
     vec2 dir = delta / dist;
     if (dist < 1.0) {
-        velocity += dir / (dist * 1.0);
-        //velocity = dir * dist * 0.002 * 1.0;
+        //velocity += dir / (dist * 1.0);
+        velocity = dir * dist * 2.0;
     }
 
     position_out[id] = position;

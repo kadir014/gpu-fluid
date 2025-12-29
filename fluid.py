@@ -12,10 +12,10 @@ WINDOW_SIZE = WINDOW_WIDTH, WINDOW_HEIGHT = 1280, 720
 MAX_FPS = 60
 ITERATIONS = 10
 
-N = 5
+N = 500
 DOMAIN = pygame.FRect(0.0, 0.0, 10.0, 10.0)
 DOMAIN_TO_SCREEN = 60.0
-PARTICLE_RADIUS = 0.05
+PARTICLE_RADIUS = 0.1
 CELL_SIZE = PARTICLE_RADIUS
 GRID_WIDTH = ceil(DOMAIN.width / CELL_SIZE)
 GRID_HEIGHT = ceil(DOMAIN.height / CELL_SIZE)
@@ -121,7 +121,6 @@ build_grid_src = build_grid_src.replace("#define CELL_N 1", f"#define CELL_N {GR
 build_grid_src = build_grid_src.replace("#define CELL_SIZE 1.0", f"#define CELL_SIZE {CELL_SIZE}")
 build_grid_src = build_grid_src.replace("#define GRID_WIDTH 1", f"#define GRID_WIDTH {GRID_WIDTH}")
 build_grid_src = build_grid_src.replace("#define GRID_HEIGHT 1", f"#define GRID_HEIGHT {GRID_HEIGHT}")
-print(build_grid_src)
 sort0_src = sort0_src.replace("#define PARTICLE_N 1", f"#define PARTICLE_N {N}")
 sort0_src = sort0_src.replace("#define CELL_N 1", f"#define CELL_N {GRID_CELL_COUNT}")
 sort1_src = sort1_src.replace("#define PARTICLE_N 1", f"#define PARTICLE_N {N}")
@@ -363,11 +362,12 @@ while is_running:
     particles_main.bind_to_storage_buffer(7)
     current_is_main = not current_is_main
 
-    # compute_neighbor.run(ceil(N / 32.0), 1, 1)
-    # context.memory_barrier()
-    # particles_alt, particles_main = particles_main, particles_alt
-    # particles_alt.bind_to_storage_buffer(6)
-    # particles_main.bind_to_storage_buffer(7)
+    compute_neighbor.run(ceil(N / 32.0), 1, 1)
+    context.memory_barrier()
+    particles_alt, particles_main = particles_main, particles_alt
+    particles_alt.bind_to_storage_buffer(6)
+    particles_main.bind_to_storage_buffer(7)
+    current_is_main = not current_is_main
 
     compute_collision.run(ceil(N / 32.0), 1, 1)
     context.memory_barrier()
