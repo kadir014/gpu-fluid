@@ -21,10 +21,11 @@ layout(std430, binding = 7) writeonly buffer particles_out {
 uniform vec2 u_mouse;
 uniform vec2 u_gravity;
 uniform float u_dt;
+uniform uint u_current_n;
 
 void main() {
     uint id = gl_GlobalInvocationID.x;
-    if (id >= PARTICLE_N) return;
+    if (id >= u_current_n) return;
 
     vec2 position = position_in[id];
     vec2 position_old = position_old_in[id];
@@ -38,6 +39,9 @@ void main() {
     if (dist < 6.0) {
         //velocity += dir / (dist * 1.0);
         velocity += dir * 3.0;
+
+        //vec2 t = vec2(dir.y, -dir.x);
+        //velocity += t / dist * 0.9;
     }
 
     position_out[id] = position;

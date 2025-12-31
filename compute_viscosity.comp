@@ -77,20 +77,18 @@ void main() {
     vec2 position_old = position_old_in[id];
     vec2 velocity = velocity_in[id];
 
-    //float density = density_in[id];
-    //float density_near = density_near_in[id];
-    float density_rest = density_rest_in[id];
-    float stiffness = stiffness_in[id];
-    float stiffness_near = stiffness_near_in[id];
-    //float pressure = pressure_in[id];
-    //float pressure_near = pressure_near_in[id];
-    vec2 uv = uv_in[id];
+    // float density = density_in[id];
+    // float density_near = density_near_in[id];
+    // float density_rest = density_rest_in[id];
+    // float stiffness = stiffness_in[id];
+    // float stiffness_near = stiffness_near_in[id];
+    // float pressure = pressure_in[id];
+    // float pressure_near = pressure_near_in[id];
+    float viscosity_sigma = viscosity_sigma_in[id];
+    float viscosity_beta = viscosity_beta_in[id];
+    //vec2 uv = uv_in[id];
 
     const float RADIUS = CELL_SIZE;
-    const float INV_RADIUS = 1.0 / RADIUS;
-
-    float density = 0.0;
-    float density_near = 0.0;
 
     ivec2 base_cell = ivec2(floor(position / CELL_SIZE));
     for (int y = -1; y <= 1; y++) {
@@ -111,99 +109,56 @@ void main() {
                 if (neighbor_id == id || neighbor_id >= u_current_n) continue;
 
                 vec2 j_position = position_in[neighbor_id];
-                    
-
-                /* Double Density Relaxation */
-
-                // Compute densities
+                vec2 j_velocity = velocity_in[neighbor_id];
+            
 
                 vec2 d = j_position - position;
                 float rij = sqrt(d.x * d.x + d.y * d.y);
-                float q = rij * INV_RADIUS;
-
-                if (q < 1.0) {
-                    float kernel = 1.0 - q;
-                    float kernel2 = kernel * kernel;
-                    density += kernel2;
-                    density_near += kernel * kernel2;
-                }
-            }
-        }
-    }
-
-    float pressure = stiffness * (density - density_rest);
-    float pressure_near = stiffness_near * density_near;
-
-    // Accumulate displacement for particle i in order to avoid bias
-    vec2 acc = vec2(0.0);
-
-    // UV diffusion
-    vec2 avg_uv = uv;
-    uint neighbors = 0;
-
-    for (int y = -1; y <= 1; y++) {
-        for (int x = -1; x <= 1; x++) {
-            ivec2 neighbor_cell = base_cell + ivec2(x, y);
-            neighbor_cell.x = clamp(neighbor_cell.x, 0, GRID_WIDTH - 1);
-            neighbor_cell.y = clamp(neighbor_cell.y, 0, GRID_HEIGHT - 1);
-
-            uint neighbor_cell_id = neighbor_cell.x + neighbor_cell.y * GRID_WIDTH;
-
-            uint start = cell_start[neighbor_cell_id];
-            uint end = cell_end[neighbor_cell_id];
-
-            for (uint i = start; i < end; i++) {
-                uint neighbor_id = sorted_particle_id[i];
-
-                // Skip self interaction
-                if (neighbor_id == id || neighbor_id >= u_current_n) continue;
-
-                vec2 j_position = position_in[neighbor_id];
-
-
-
-                vec2 d = j_position - position;
-                float rij = sqrt(d.x * d.x + d.y * d.y);
-                if (rij <= 0.00001) continue;
-                float q = rij * INV_RADIUS;
+                if (rij <= 0.0001) continue;
+                float q = rij / RADIUS;
 
                 if (q < 1.0) {
                     vec2 n = d / rij;
-                    float kernel = 1.0 - q;
-                    
-                    // Density relaxation displacement 
-                    float D = 0.5 *
-                            (u_dt * u_dt) *
-                            (pressure * kernel + pressure_near * kernel * kernel);
 
-                    acc -= D * n;
+                    // Inward radial velocity
+                    float rvx = velocity.x - j_velocity.x;
+                    float rvy = velocity.y - j_velocity.y;
+                    float u = rvx * n.x + rvy * n.y;
+
+                    if (u > 0.0) {
+                        // Clamping is not in the paper, but without scenes explode
+                        if (u > 1.0) u = 1.0;
+                        
+                        // Linear and quadratic impulses
+                        float I = 0.5 *
+                                u_dt *
+                                (1.0 - q) *
+                                (viscosity_sigma * u + viscosity_beta * u * u);
+
+                        // p.velocity_x[i] -= Ix;
+                        // p.velocity_y[i] -= Iy;
+                        // p.velocity_x[j] += Ix;
+                        // p.velocity_y[j] += Iy;
+                        velocity -= I * n;
+                    }
                 }
             }
         }
     }
 
-    position += acc;
 
-    //avg_uv /= (neighbors + 1);
-    //float diffusion_rate = 0.1;
-    //uv = mix(uv, avg_uv, diffusion_rate);
-
-    //uv += velocity * u_dt * 0.02;
-
-    const float uv_scale = 0.01;
-    const float memory_rate = 0.002 * 0.9;
-    uv = mix(uv, position * uv_scale, memory_rate);
-
-
-    position_out[id] = position;
-    position_old_out[id] = position_old;
+    //position_out[id] = position;
+    //position_old_out[id] = position_old;
     velocity_out[id] = velocity;
 
-    density_out[id] = density;
-    density_near_out[id] = density_near;
+    // density_out[id] = density;
+    // density_near_out[id] = density_near;
     
-    pressure_out[id] = pressure;
-    pressure_near_out[id] = pressure_near;
+    // pressure_out[id] = pressure;
+    // pressure_near_out[id] = pressure_near;
 
-    uv_out[id] = uv;
+    // viscosity_sigma_out[id] = viscosity_sigma;
+    // viscosity_beta_out[id] = viscosity_beta;
+
+    // uv_out[id] = uv;
 }

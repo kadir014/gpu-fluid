@@ -19,10 +19,11 @@ layout(std430, binding = 7) writeonly buffer particles_out {
 };
 
 uniform float u_inv_dt;
+uniform uint u_current_n;
 
 void main() {
     uint id = gl_GlobalInvocationID.x;
-    if (id >= PARTICLE_N) return;
+    if (id >= u_current_n) return;
 
     vec2 position = position_in[id];
     vec2 position_old = position_old_in[id];
@@ -33,11 +34,11 @@ void main() {
 
     // linear damping to avoid numerical precision errors
     float k = 0.9995;
-    velocity *= k;
+    //velocity *= k;
 
     // TODO: Speed limit
     float vel = length(velocity);
-    const float max_vel = 47.0;
+    const float max_vel = 55.0;
     if (vel > max_vel) {
         vec2 n = velocity / vel;
         velocity = max_vel * n;

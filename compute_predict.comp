@@ -19,10 +19,11 @@ layout(std430, binding = 7) writeonly buffer particles_out {
 };
 
 uniform float u_dt;
+uniform uint u_current_n;
 
 void main() {
     uint id = gl_GlobalInvocationID.x;
-    if (id >= PARTICLE_N) return;
+    if (id >= u_current_n) return;
 
     vec2 position = position_in[id];
     vec2 position_old = position_old_in[id];
